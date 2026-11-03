@@ -1,21 +1,12 @@
-import rule from '@next/eslint-plugin-next/lib/rules/inline-script-id'
 import { RuleTester } from 'eslint'
-;(RuleTester as any).setDefaultConfig({
-  parserOptions: {
-    ecmaVersion: 2018,
-    sourceType: 'module',
-    ecmaFeatures: {
-      modules: true,
-      jsx: true,
-    },
-  },
-})
+import { rules } from '@next/eslint-plugin-next'
+
+const NextESLintRule = rules['inline-script-id']
 
 const errorMessage =
-  'next/script components with inline content must specify an `id` attribute. See: https://nextjs.org/docs/messages/inline-script-id'
+  '`next/script` components with inline content must specify an `id` attribute. See: https://nextjs.org/docs/messages/inline-script-id'
 
-const ruleTester = new RuleTester()
-ruleTester.run('inline-script-id', rule, {
+const tests = {
   valid: [
     {
       code: `import Script from 'next/script';
@@ -73,6 +64,39 @@ ruleTester.run('inline-script-id', rule, {
               __html: \`console.log('Hello world');\`
             }}
           />
+        )
+      }`,
+    },
+    {
+      code: `import Script from 'next/script';
+
+      export default function TestPage() {
+        return (
+          <Script {...{ strategy: "lazyOnload" }} id={"test-script"}>
+            {\`console.log('Hello world');\`}
+          </Script>
+        )
+      }`,
+    },
+    {
+      code: `import Script from 'next/script';
+
+      export default function TestPage() {
+        return (
+          <Script {...{ strategy: "lazyOnload", id: "test-script" }}>
+            {\`console.log('Hello world');\`}
+          </Script>
+        )
+      }`,
+    },
+    {
+      code: `import Script from 'next/script';
+      const spread = { strategy: "lazyOnload" }
+      export default function TestPage() {
+        return (
+          <Script {...spread} id={"test-script"}>
+            {\`console.log('Hello world');\`}
+          </Script>
         )
       }`,
     },
@@ -151,4 +175,19 @@ ruleTester.run('inline-script-id', rule, {
       ],
     },
   ],
+}
+
+describe('inline-script-id', () => {
+  new RuleTester({
+    languageOptions: {
+      ecmaVersion: 2018,
+      sourceType: 'module',
+      parserOptions: {
+        ecmaFeatures: {
+          modules: true,
+          jsx: true,
+        },
+      },
+    },
+  }).run('eslint', NextESLintRule, tests)
 })

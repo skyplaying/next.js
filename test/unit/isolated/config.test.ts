@@ -1,128 +1,377 @@
 /* eslint-env jest */
-import os from 'os'
 import { join } from 'path'
-import loadConfig from 'next/dist/server/config'
-import { PHASE_DEVELOPMENT_SERVER } from 'next/constants'
+import { PHASE_DEVELOPMENT_SERVER, PHASE_TEST } from 'next/constants'
 
 const pathToConfig = join(__dirname, '_resolvedata', 'without-function')
 const pathToConfigFn = join(__dirname, '_resolvedata', 'with-function')
 
+// force require usage instead of dynamic import in jest
+// x-ref: https://github.com/nodejs/node/issues/35889
+process.env.__NEXT_TEST_MODE = 'jest'
+
 describe('config', () => {
-  if (os.platform() === 'linux') {
-    it('Should get the configuration', async () => {
-      const config = await loadConfig(PHASE_DEVELOPMENT_SERVER, pathToConfig)
-      expect(config.customConfig).toBe(true)
-    })
+  let loadConfig: typeof import('next/dist/server/config').default
 
-    it('Should pass the phase correctly', async () => {
-      const config = await loadConfig(PHASE_DEVELOPMENT_SERVER, pathToConfigFn)
-      expect(config.phase).toBe(PHASE_DEVELOPMENT_SERVER)
-    })
+  beforeEach(async () => {
+    // Reset the module cache to ensure each test gets a fresh config load
+    // This is important because config.ts now has a module-level configCache
+    jest.resetModules()
 
-    it('Should pass the defaultConfig correctly', async () => {
-      const config = await loadConfig(PHASE_DEVELOPMENT_SERVER, pathToConfigFn)
-      expect(config.defaultConfig).toBeDefined()
-    })
+    // Dynamically import the module after reset to get a fresh instance
+    const configModule = await import('next/dist/server/config')
+    loadConfig = configModule.default
+  })
+  it('Should get the configuration', async () => {
+    const config = await loadConfig(PHASE_DEVELOPMENT_SERVER, pathToConfig)
+    expect((config as any).customConfig).toBe(true)
+  })
 
-    it('Should assign object defaults deeply to user config', async () => {
-      const config = await loadConfig(PHASE_DEVELOPMENT_SERVER, pathToConfigFn)
-      expect(config.distDir).toEqual('.next')
-      expect(config.onDemandEntries.maxInactiveAge).toBeDefined()
-    })
+  it('Should pass the phase correctly', async () => {
+    const config = await loadConfig(PHASE_DEVELOPMENT_SERVER, pathToConfigFn)
+    expect((config as any).phase).toBe(PHASE_DEVELOPMENT_SERVER)
+  })
 
-    it('Should pass the customConfig correctly', async () => {
-      const config = await loadConfig(PHASE_DEVELOPMENT_SERVER, null, {
-        customConfig: true,
-      })
-      expect(config.customConfig).toBe(true)
-    })
+  it('Should pass the defaultConfig correctly', async () => {
+    const config = await loadConfig(PHASE_DEVELOPMENT_SERVER, pathToConfigFn)
+    expect((config as any).defaultConfig).toBeDefined()
+  })
 
-    it('Should not pass the customConfig when it is null', async () => {
-      const config = await loadConfig(PHASE_DEVELOPMENT_SERVER, null, null)
-      expect(config.webpack).toBe(null)
-    })
+  it('Should assign object defaults deeply to user config', async () => {
+    const config = await loadConfig(PHASE_DEVELOPMENT_SERVER, pathToConfigFn)
+    expect(config.distDir.replace(/\\/g, '/')).toEqual('.next/dev')
+    expect(config.onDemandEntries.maxInactiveAge).toBeDefined()
+  })
 
-    it('Should assign object defaults deeply to customConfig', async () => {
-      const config = await loadConfig(PHASE_DEVELOPMENT_SERVER, null, {
+  it('Should pass the customConfig correctly', async () => {
+    const config = await loadConfig(PHASE_DEVELOPMENT_SERVER, '<rootDir>', {
+      customConfig: {
+        customConfigKey: 'customConfigValue',
+      },
+    })
+    expect((config as any).customConfigKey).toBe('customConfigValue')
+  })
+
+  it('Should assign object defaults deeply to customConfig', async () => {
+    const config = await loadConfig(PHASE_DEVELOPMENT_SERVER, '<rootDir>', {
+      customConfig: {
         customConfig: true,
         onDemandEntries: { custom: true },
+      },
+    })
+    expect((config as any).customConfig).toBe(true)
+    expect(config.onDemandEntries.maxInactiveAge).toBeDefined()
+  })
+
+  it('Should enable the TypeScript CLI by default and allow opting out', async () => {
+    const defaultConfig = await loadConfig(
+      PHASE_DEVELOPMENT_SERVER,
+      '<rootDir>-typescript-cli-default',
+      { customConfig: {} }
+    )
+    expect(defaultConfig.experimental.useTypeScriptCli).toBe(true)
+
+    const apiConfig = await loadConfig(
+      PHASE_DEVELOPMENT_SERVER,
+      '<rootDir>-typescript-api',
+      {
+        customConfig: {
+          experimental: {
+            useTypeScriptCli: false,
+          },
+        },
+      }
+    )
+    expect(apiConfig.experimental.useTypeScriptCli).toBe(false)
+  })
+
+  it('Should configure the development memory threshold opt-out', async () => {
+    const defaultConfig = await loadConfig(
+      PHASE_DEVELOPMENT_SERVER,
+      '<rootDir>-memory-threshold-default',
+      {
+        customConfig: {},
+      }
+    )
+    expect(defaultConfig.experimental.devMemoryThresholdRestart).toBe(true)
+
+    const disabledConfig = await loadConfig(
+      PHASE_DEVELOPMENT_SERVER,
+      '<rootDir>-memory-threshold-disabled',
+      {
+        customConfig: {
+          experimental: {
+            devMemoryThresholdRestart: false,
+          },
+        },
+      }
+    )
+    expect(disabledConfig.experimental.devMemoryThresholdRestart).toBe(false)
+  })
+
+  it.each([undefined, true, false])(
+    'Should preserve imgOptMozjpeg=%s in the runtime config',
+    async (imgOptMozjpeg) => {
+      const config = await loadConfig(PHASE_DEVELOPMENT_SERVER, '<rootDir>', {
+        customConfig: {
+          experimental: {
+            imgOptMozjpeg,
+            runtimeServerDeploymentId: true,
+          },
+        },
       })
-      expect(config.customConfig).toBe(true)
-      expect(config.onDemandEntries.maxInactiveAge).toBeDefined()
+      const { getNextConfigRuntime } = await import(
+        'next/dist/server/config-shared'
+      )
+      expect(config.experimental.imgOptMozjpeg).toBe(imgOptMozjpeg ?? true)
+      expect(getNextConfigRuntime(config).experimental.imgOptMozjpeg).toBe(
+        imgOptMozjpeg ?? true
+      )
+    }
+  )
+
+  it('Should allow bundler-specific options during the test phase', async () => {
+    const config = await loadConfig(PHASE_TEST, '<rootDir>-test-phase', {
+      customConfig: {
+        reactCompiler: true,
+        experimental: {
+          cssChunking: 'graph',
+          turbopackRustReactCompiler: true,
+        },
+      },
     })
 
-    it('Should allow setting objects which do not have defaults', async () => {
-      const config = await loadConfig(PHASE_DEVELOPMENT_SERVER, null, {
+    expect(config.experimental.cssChunking).toBe('graph')
+    expect(config.experimental.turbopackRustReactCompiler).toBe(true)
+  })
+
+  it('Should allow setting objects which do not have defaults', async () => {
+    const config = await loadConfig(PHASE_DEVELOPMENT_SERVER, '<rootDir>', {
+      customConfig: {
         bogusSetting: { custom: true },
-      })
-      expect(config.bogusSetting).toBeDefined()
-      expect(config.bogusSetting.custom).toBe(true)
+      },
     })
+    expect((config as any).bogusSetting).toBeDefined()
+    expect((config as any).bogusSetting.custom).toBe(true)
+  })
 
-    it('Should override defaults for arrays from user arrays', async () => {
-      const config = await loadConfig(PHASE_DEVELOPMENT_SERVER, null, {
+  it('Should override defaults for arrays from user arrays', async () => {
+    const config = await loadConfig(PHASE_DEVELOPMENT_SERVER, '<rootDir>', {
+      customConfig: {
         pageExtensions: ['.bogus'],
-      })
-      expect(config.pageExtensions).toEqual(['.bogus'])
+      },
     })
+    expect(config.pageExtensions).toEqual(['.bogus'])
+  })
 
-    it('Should throw when an invalid target is provided', async () => {
-      await expect(async () => {
+  it('Should throw when an invalid target is provided', async () => {
+    await expect(async () => {
+      await loadConfig(
+        PHASE_DEVELOPMENT_SERVER,
+        join(__dirname, '_resolvedata', 'invalid-target')
+      )
+    }).rejects.toThrow(/The "target" property is no longer supported/)
+  })
+
+  it('Should throw an error when next.config.(js | mjs | ts) is not present', async () => {
+    await expect(
+      async () =>
         await loadConfig(
           PHASE_DEVELOPMENT_SERVER,
-          join(__dirname, '_resolvedata', 'invalid-target')
+          join(__dirname, '_resolvedata', 'missing-config')
         )
-      }).rejects.toThrow(/Specified target is invalid/)
+    ).rejects.toThrow(
+      /Configuring Next.js via .+ is not supported. Please replace the file with 'next.config.js'/
+    )
+  })
+
+  it('Should throw an error when sassOptions.functions is used with Turbopack', async () => {
+    const originalTurbopack = process.env.TURBOPACK
+    process.env.TURBOPACK = '1'
+
+    try {
+      await expect(async () => {
+        // Use a unique directory to avoid cache conflicts
+        await loadConfig(PHASE_DEVELOPMENT_SERVER, '<rootDir>-turbopack-test', {
+          customConfig: {
+            sassOptions: {
+              functions: {
+                'get($keys)': function (keys) {
+                  return 'test'
+                },
+              },
+            },
+          },
+        })
+      }).rejects.toThrow(
+        /The "sassOptions\.functions" option is not supported when using Turbopack/
+      )
+    } finally {
+      if (originalTurbopack === undefined) {
+        delete process.env.TURBOPACK
+      } else {
+        process.env.TURBOPACK = originalTurbopack
+      }
+    }
+  })
+
+  it('Should allow sassOptions.functions when not using Turbopack', async () => {
+    const originalTurbopack = process.env.TURBOPACK
+    delete process.env.TURBOPACK
+
+    try {
+      const config = await loadConfig(PHASE_DEVELOPMENT_SERVER, '<rootDir>', {
+        customConfig: {
+          sassOptions: {
+            functions: {
+              'get($keys)': function (keys) {
+                return 'test'
+              },
+            },
+          },
+        },
+      })
+      expect((config as any).sassOptions.functions).toBeDefined()
+    } finally {
+      if (originalTurbopack !== undefined) {
+        process.env.TURBOPACK = originalTurbopack
+      }
+    }
+  })
+
+  it('Should not throw an error when two versions of next.config.js are present', async () => {
+    const config = await loadConfig(
+      PHASE_DEVELOPMENT_SERVER,
+      join(__dirname, '_resolvedata', 'js-ts-config')
+    )
+    expect((config as any).__test__ext).toBe('js')
+  })
+
+  it('Should not throw an error when next.config.ts is present', async () => {
+    const config = await loadConfig(
+      PHASE_DEVELOPMENT_SERVER,
+      join(__dirname, '_resolvedata', 'typescript-config')
+    )
+    expect((config as any).__test__ext).toBe('ts')
+  })
+
+  describe('outputFileTracingRoot and turbopack.root consistency', () => {
+    it('Should set both outputFileTracingRoot and turbopack.root to the same value when only outputFileTracingRoot is provided', async () => {
+      const config = await loadConfig(PHASE_DEVELOPMENT_SERVER, '<rootDir>', {
+        customConfig: {
+          outputFileTracingRoot: '/custom/root',
+        },
+      })
+      expect(config.outputFileTracingRoot).toBe('/custom/root')
+      expect(config.turbopack.root).toBe('/custom/root')
     })
 
-    it('Should pass when a valid target is provided', async () => {
+    it('Should set both outputFileTracingRoot and turbopack.root to the same value when only turbopack.root is provided', async () => {
+      const config = await loadConfig(PHASE_DEVELOPMENT_SERVER, '<rootDir>', {
+        customConfig: {
+          turbopack: { root: '/custom/root' },
+        },
+      })
+      expect(config.outputFileTracingRoot).toBe('/custom/root')
+      expect(config.turbopack.root).toBe('/custom/root')
+    })
+
+    it('Should use outputFileTracingRoot value when both are provided with different values', async () => {
+      const config = await loadConfig(PHASE_DEVELOPMENT_SERVER, '<rootDir>', {
+        customConfig: {
+          outputFileTracingRoot: '/tracing/root',
+          turbopack: { root: '/turbo/root' },
+        },
+      })
+      expect(config.outputFileTracingRoot).toBe('/tracing/root')
+      expect(config.turbopack.root).toBe('/tracing/root')
+    })
+
+    it('Should keep the same value when both are provided with matching values', async () => {
+      const config = await loadConfig(PHASE_DEVELOPMENT_SERVER, '<rootDir>', {
+        customConfig: {
+          outputFileTracingRoot: '/same/root',
+          turbopack: { root: '/same/root' },
+        },
+      })
+      expect(config.outputFileTracingRoot).toBe('/same/root')
+      expect(config.turbopack.root).toBe('/same/root')
+    })
+
+    it('Should set both to findRootDir result when neither is provided', async () => {
+      const config = await loadConfig(PHASE_DEVELOPMENT_SERVER, '<rootDir>', {
+        customConfig: {},
+      })
+      expect(config.outputFileTracingRoot).toBeDefined()
+      expect(config.turbopack.root).toBe(config.outputFileTracingRoot)
+    })
+  })
+
+  describe('partialPrefetching config', () => {
+    it('Should throw when `partialPrefetching` is set without `cacheComponents`', async () => {
+      await expect(async () => {
+        await loadConfig(PHASE_DEVELOPMENT_SERVER, '<rootDir>-no-cc', {
+          customConfig: {
+            partialPrefetching: true,
+          },
+        })
+      }).rejects.toThrow(
+        /`partialPrefetching` requires `cacheComponents` to be enabled/
+      )
+    })
+
+    it('Should accept `partialPrefetching: true` when `cacheComponents` is enabled', async () => {
       const config = await loadConfig(
         PHASE_DEVELOPMENT_SERVER,
-        join(__dirname, '_resolvedata', 'valid-target')
+        '<rootDir>-cc',
+        {
+          customConfig: {
+            cacheComponents: true,
+            partialPrefetching: true,
+          },
+        }
       )
-      expect(config.target).toBe('serverless')
+      expect(config.partialPrefetching).toBe(true)
+    })
+  })
+
+  describe('experimental.useCache config', () => {
+    it('Should throw when `useCache` is disabled while `cacheComponents` is enabled', async () => {
+      await expect(async () => {
+        await loadConfig(PHASE_DEVELOPMENT_SERVER, '<rootDir>-uc-conflict', {
+          customConfig: {
+            cacheComponents: true,
+            experimental: { useCache: false },
+          },
+        })
+      }).rejects.toThrow(
+        /`experimental.useCache` cannot be disabled when `cacheComponents` is enabled/
+      )
     })
 
-    it('Should throw an error when next.config.js is not present', async () => {
-      await expect(
-        async () =>
-          await loadConfig(
-            PHASE_DEVELOPMENT_SERVER,
-            join(__dirname, '_resolvedata', 'typescript-config')
-          )
-      ).rejects.toThrow(
-        /Configuring Next.js via .+ is not supported. Please replace the file with 'next.config.js'/
-      )
-    })
-
-    it('Should not throw an error when two versions of next.config.js are present', async () => {
+    it('Should accept `useCache: false` when `cacheComponents` is not enabled', async () => {
       const config = await loadConfig(
         PHASE_DEVELOPMENT_SERVER,
-        join(__dirname, '_resolvedata', 'js-ts-config')
+        '<rootDir>-uc-off',
+        {
+          customConfig: {
+            experimental: { useCache: false },
+          },
+        }
       )
-      expect(config.__test__ext).toBe('js')
+      expect(config.experimental.useCache).toBe(false)
     })
 
-    it('Should ignore configs set to `undefined`', async () => {
-      const config = await loadConfig(PHASE_DEVELOPMENT_SERVER, null, {
-        target: undefined,
-      })
-      expect(config.target).toBe('server')
-    })
-
-    it('Should ignore configs set to `null`', async () => {
-      const config = await loadConfig(PHASE_DEVELOPMENT_SERVER, null, {
-        target: null,
-      })
-      expect(config.target).toBe('server')
-    })
-  } else {
-    // TODO: remove this when segfault no longer occurs with dynamic
-    // import inside of jest due to vm usage
-    it('should skip on non-linux platforms', () => {
-      console.warn(
-        'Warning!! These tests can not currently run on non-linux systems'
+    it('Should backfill `useCache` from `cacheComponents` when it is not set', async () => {
+      const config = await loadConfig(
+        PHASE_DEVELOPMENT_SERVER,
+        '<rootDir>-uc-backfill',
+        {
+          customConfig: {
+            cacheComponents: true,
+          },
+        }
       )
+      expect(config.experimental.useCache).toBe(true)
     })
-  }
+  })
 })

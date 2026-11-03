@@ -1,113 +1,198 @@
-import { getFullUrl } from 'next-test-utils'
-import os from 'os'
-import { BrowserInterface } from './browsers/base'
+import { debugPrint, getFullUrl } from 'next-test-utils'
+import {
+  Permissions,
+  Playwright,
+  PlaywrightNavigationWaitUntil,
+} from './browsers/playwright'
+import { Page } from 'playwright'
 
-let deviceIP: string
-const isBrowserStack = !!process.env.BROWSERSTACK
-;(global as any).browserName = process.env.BROWSER_NAME || 'chrome'
+export type { Playwright }
 
-if (isBrowserStack) {
-  const nets = os.networkInterfaces()
-  for (const key of Object.keys(nets)) {
-    let done = false
-
-    for (const item of nets[key]) {
-      if (item.family === 'IPv4' && !item.internal) {
-        deviceIP = item.address
-        done = true
-        break
-      }
-    }
-    if (done) break
-  }
+if (!process.env.TEST_FILE_PATH) {
+  process.env.TEST_FILE_PATH = module.parent!.filename
 }
 
-let browserQuit
+;(global as any).browserName = process.env.BROWSER_NAME || 'chrome'
+
+let browserTeardown: (() => Promise<void>)[] = []
+let browserQuit: (() => Promise<void>) | undefined
 
 if (typeof afterAll === 'function') {
   afterAll(async () => {
+    await Promise.all(browserTeardown.map((f) => f())).catch((e) =>
+      console.error('browser teardown', e)
+    )
+
     if (browserQuit) {
       await browserQuit()
     }
   })
 }
 
+export interface WebdriverOptions {
+  permissions?: Permissions
+  /**
+   * whether to wait for React hydration to finish
+   */
+  waitHydration?: boolean
+  /**
+   * allow retrying hydration wait if reload occurs
+   */
+  retryWaitHydration?: boolean
+  /**
+   * The browser event to wait for during the initial page load. Passed through to `browser.loadPage`
+   * */
+  waitUntil?: PlaywrightNavigationWaitUntil
+  /**
+   * disable cache for page load
+   */
+  disableCache?: boolean
+  /**
+   * the callback receiving page instance before loading page
+   * @param page
+   * @returns
+   */
+  beforePageLoad?: (page: Page) => void | Promise<void>
+  /**
+   * @see {@link https://playwright.dev/docs/api/class-page#page-set-extra-http-headers Playwright.Page.setExtraHTTPHeaders}
+   */
+  extraHTTPHeaders?: Record<string, string>
+  /**
+   * browser locale
+   */
+  locale?: string
+  /**
+   * disable javascript
+   */
+  disableJavaScript?: boolean
+  /**
+   * ignore https errors
+   */
+  ignoreHTTPSErrors?: boolean
+  cpuThrottleRate?: number
+  pushErrorAsConsoleLog?: boolean
+
+  /**
+   * Suppress the harness from echoing the browser's console output to the
+   * test's terminal (the `Browser Log:` lines). Browser logs are still
+   * collected and available via `browser.log()`.
+   */
+  disableBrowserLog?: boolean
+
+  /**
+   * Override the user agent
+   */
+  userAgent?: string
+
+  /**
+   * Override the base URL/port that `url` is resolved against. Useful when the
+   * test needs to drive a proxy or a separate server in front of Next.js.
+   */
+  baseUrl?: string | number
+}
+
 /**
  *
- * @param appPort can either be the port or the full URL
+ * @param appPortOrUrl can either be the port or the full URL
  * @param url the path/query to append when using appPort
- * @param waitHydration whether to wait for react hydration to finish
- * @param retryWaitHydration allow retrying hydration wait if reload occurs
  * @returns thenable browser instance
  */
 export default async function webdriver(
   appPortOrUrl: string | number,
   url: string,
-  waitHydration = true,
-  retryWaitHydration = false
-): Promise<BrowserInterface> {
-  let CurrentInterface: typeof BrowserInterface
-
-  // we import only the needed interface
-  if (
-    process.env.LEGACY_SAFARI ||
-    process.env.BROWSER_NAME === 'internet explorer' ||
-    process.env.SKIP_LOCAL_SELENIUM_SERVER
-  ) {
-    const browserMod = require('./browsers/selenium')
-    CurrentInterface = browserMod.default
-    browserQuit = browserMod.quit
-  } else {
-    const browserMod = require('./browsers/playwright')
-    CurrentInterface = browserMod.default
-    browserQuit = browserMod.quit
+  options?: WebdriverOptions
+): Promise<Playwright> {
+  const defaultOptions = {
+    waitHydration: true,
+    retryWaitHydration: false,
+    disableCache: false,
+  }
+  options = Object.assign(defaultOptions, options)
+  const {
+    waitHydration,
+    retryWaitHydration,
+    disableCache,
+    beforePageLoad,
+    extraHTTPHeaders,
+    locale,
+    disableJavaScript,
+    permissions,
+    ignoreHTTPSErrors,
+    cpuThrottleRate,
+    pushErrorAsConsoleLog,
+    disableBrowserLog,
+    userAgent,
+    waitUntil,
+    baseUrl,
+  } = options
+  if (baseUrl !== undefined) {
+    appPortOrUrl = baseUrl
   }
 
-  const browser = new CurrentInterface()
+  const { Playwright, quit } = await import('./browsers/playwright')
+  browserQuit = quit
+
+  const browser = new Playwright()
   const browserName = process.env.BROWSER_NAME || 'chrome'
-  await browser.setup(browserName)
+  await browser.setup(
+    browserName,
+    locale!,
+    !disableJavaScript,
+    Boolean(ignoreHTTPSErrors),
+    userAgent,
+    permissions
+  )
   ;(global as any).browserName = browserName
 
-  const fullUrl = getFullUrl(
-    appPortOrUrl,
-    url,
-    isBrowserStack ? deviceIP : 'localhost'
-  )
+  const fullUrl = getFullUrl(appPortOrUrl, url, 'localhost')
 
-  console.log(`\n> Loading browser with ${fullUrl}\n`)
+  debugPrint(`Loading browser with ${fullUrl}`)
 
-  await browser.loadPage(fullUrl)
-  console.log(`\n> Loaded browser with ${fullUrl}\n`)
+  await browser.loadPage(fullUrl, {
+    disableCache,
+    cpuThrottleRate,
+    beforePageLoad,
+    extraHTTPHeaders,
+    pushErrorAsConsoleLog,
+    disableBrowserLog,
+    waitUntil,
+  })
+  debugPrint(`Loaded browser with ${fullUrl}`)
+
+  browserTeardown.push(browser.close.bind(browser))
 
   // Wait for application to hydrate
-  if (waitHydration) {
-    console.log(`\n> Waiting hydration for ${fullUrl}\n`)
+  if (!disableJavaScript && waitHydration) {
+    debugPrint(`Waiting hydration for ${fullUrl}`)
 
     const checkHydrated = async () => {
-      await browser.evalAsync(function () {
-        var callback = arguments[arguments.length - 1]
-
-        // if it's not a Next.js app return
-        if (
-          document.documentElement.innerHTML.indexOf('__NEXT_DATA__') === -1
-        ) {
-          console.log('Not a next.js page, resolving hydrate check')
-          callback()
-        }
-
-        // TODO: should we also ensure router.isReady is true
-        // by default before resolving?
-        if ((window as any).__NEXT_HYDRATED) {
-          console.log('Next.js page already hydrated')
-          callback()
-        } else {
-          var timeout = setTimeout(callback, 10 * 1000)
-          ;(window as any).__NEXT_HYDRATED_CB = function () {
-            clearTimeout(timeout)
-            console.log('Next.js hydrate callback fired')
+      await browser.eval(() => {
+        return new Promise<void>((callback) => {
+          // if it's not a Next.js app return
+          if (
+            !document.documentElement.innerHTML.includes('__NEXT_DATA__') &&
+            // @ts-ignore next exists on window if it's a Next.js page.
+            typeof ((window as any).next && (window as any).next.version) ===
+              'undefined'
+          ) {
+            console.log('Not a next.js page, resolving hydrate check')
             callback()
           }
-        }
+
+          // TODO: should we also ensure router.isReady is true
+          // by default before resolving?
+          if ((window as any).__NEXT_HYDRATED) {
+            console.log('Next.js page already hydrated')
+            callback()
+          } else {
+            let timeout = setTimeout(callback, 10 * 1000)
+            ;(window as any).__NEXT_HYDRATED_CB = function () {
+              clearTimeout(timeout)
+              console.log('Next.js hydrate callback fired')
+              callback()
+            }
+          }
+        })
       })
     }
 
@@ -124,7 +209,8 @@ export default async function webdriver(
       }
     }
 
-    console.log(`\n> Hydration complete for ${fullUrl}\n`)
+    debugPrint(`Hydration complete for ${fullUrl}`)
   }
+
   return browser
 }

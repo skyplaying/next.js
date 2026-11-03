@@ -1,18 +1,9 @@
-import rule from '@next/eslint-plugin-next/lib/rules/google-font-preconnect'
 import { RuleTester } from 'eslint'
-;(RuleTester as any).setDefaultConfig({
-  parserOptions: {
-    ecmaVersion: 2020,
-    sourceType: 'module',
-    ecmaFeatures: {
-      modules: true,
-      jsx: true,
-    },
-  },
-})
-const ruleTester = new RuleTester()
+import { rules } from '@next/eslint-plugin-next'
 
-ruleTester.run('google-font-preconnect', rule, {
+const NextESLintRule = rules['google-font-preconnect']
+
+const tests = {
   valid: [
     `export const Test = () => (
         <div>
@@ -42,7 +33,7 @@ ruleTester.run('google-font-preconnect', rule, {
       errors: [
         {
           message:
-            'Preconnect is missing. See https://nextjs.org/docs/messages/google-font-preconnect.',
+            '`rel="preconnect"` is missing from Google Font. See: https://nextjs.org/docs/messages/google-font-preconnect',
           type: 'JSXOpeningElement',
         },
       ],
@@ -58,10 +49,25 @@ ruleTester.run('google-font-preconnect', rule, {
       errors: [
         {
           message:
-            'Preconnect is missing. See https://nextjs.org/docs/messages/google-font-preconnect.',
+            '`rel="preconnect"` is missing from Google Font. See: https://nextjs.org/docs/messages/google-font-preconnect',
           type: 'JSXOpeningElement',
         },
       ],
     },
   ],
+}
+
+describe('google-font-preconnect', () => {
+  new RuleTester({
+    languageOptions: {
+      ecmaVersion: 2020,
+      sourceType: 'module',
+      parserOptions: {
+        ecmaFeatures: {
+          modules: true,
+          jsx: true,
+        },
+      },
+    },
+  }).run('eslint', NextESLintRule, tests)
 })

@@ -1,15 +1,23 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 for folder in examples/* ; do
   if [ -f "$folder/package.json" ]; then
-    cp -n packages/create-next-app/templates/default/gitignore $folder/.gitignore;
-    cat $folder/package.json | jq '
+    tmp=$(mktemp)
+    jq '
       .private = true |
       del(.license, .version, .name, .author, .description)
-    ' | sponge $folder/package.json
+    ' "$folder/package.json" > "$tmp" && cat "$tmp" > "$folder/package.json"
+    rm -f "$tmp"
   fi
   if [ -f "$folder/tsconfig.json" ]; then
-    cp packages/create-next-app/templates/typescript/next-env.d.ts $folder/next-env.d.ts
+    if [ -d "$folder/app" ] || [ -d "$folder/src/app" ]; then
+      cp packages/create-next-app/templates/app/ts/next-env.d.ts $folder/next-env.d.ts
+    else
+      cp packages/create-next-app/templates/default/ts/next-env.d.ts $folder/next-env.d.ts
+    fi
+  fi
+  if [ ! -f "$folder/.gitignore" ]; then
+    cp packages/create-next-app/templates/default/js/gitignore $folder/.gitignore;
   fi
 done;
 

@@ -1,15 +1,16 @@
-import Head from 'next/head'
-import Link from 'next/link'
-import useSWR from 'swr'
-import fetcher from '../lib/fetcher'
-import Header from '../components/header'
-import Footer from '../components/footer'
+import Head from "next/head";
+import Link from "next/link";
+import useSWR from "swr";
+import fetcher from "../lib/fetcher";
+import Header from "../components/header";
+import Footer from "../components/footer";
 
 export default function Home() {
-  const { data, error } = useSWR('/api/movies', fetcher)
+  const { data, error, isLoading } = useSWR("/api/movies", fetcher);
 
-  if (error) return <div>failed to load</div>
-  if (!data) return <div>loading...</div>
+  if (error) return <div>failed to load</div>;
+  if (isLoading) return <div>loading...</div>;
+  if (!data) return null;
 
   return (
     <div className="container">
@@ -42,8 +43,11 @@ export default function Home() {
                 <tr className="movie" key={movie.title}>
                   <th>{index + 1}</th>
                   <td>
-                    <Link href={`/movie/${encodeURIComponent(movie.title)}`}>
-                      <a className="link">{movie.title}</a>
+                    <Link
+                      href={`/movie/${encodeURIComponent(movie.title)}`}
+                      className="link"
+                    >
+                      {movie.title}
                     </Link>
                   </td>
                   <td>{movie.released}</td>
@@ -59,8 +63,11 @@ export default function Home() {
                     <ul>
                       {movie.actors.map((actor) => (
                         <li key={actor}>
-                          <Link href={`/actor/${encodeURIComponent(actor)}`}>
-                            <a className="link">{actor}</a>
+                          <Link
+                            href={`/actor/${encodeURIComponent(actor)}`}
+                            className="link"
+                          >
+                            {actor}
                           </Link>
                         </li>
                       ))}
@@ -125,5 +132,5 @@ export default function Home() {
         }
       `}</style>
     </div>
-  )
+  );
 }

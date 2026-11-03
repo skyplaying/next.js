@@ -10,6 +10,19 @@ const babel = async (code: string, queryOpts = {} as any) => {
   const { isServer = false, resourcePath = `index.js` } = queryOpts
 
   let isAsync = false
+
+  const options = {
+    // loader opts
+    cwd: dir,
+    isServer,
+    distDir: path.resolve(dir, '.next'),
+    pagesDir:
+      'pagesDir' in queryOpts ? queryOpts.pagesDir : path.resolve(dir, 'pages'),
+    cache: false,
+    development: true,
+    hasReactRefresh: !isServer,
+    transformMode: 'default',
+  }
   return new Promise<string>((resolve, reject) => {
     function callback(err, content) {
       if (err) {
@@ -27,18 +40,9 @@ const babel = async (code: string, queryOpts = {} as any) => {
       },
       callback,
       emitWarning() {},
-      query: {
-        // loader opts
-        cwd: dir,
-        isServer,
-        distDir: path.resolve(dir, '.next'),
-        pagesDir:
-          'pagesDir' in queryOpts
-            ? queryOpts.pagesDir
-            : path.resolve(dir, 'pages'),
-        cache: false,
-        development: true,
-        hasReactRefresh: !isServer,
+      query: options,
+      getOptions: function () {
+        return options
       },
       currentTraceSpan: new Span({ name: 'test' }),
     })(code, null)
@@ -55,7 +59,7 @@ describe('next-babel-loader', () => {
       const code = await babel(`process.env.NODE_ENV`, {
         isServer: false,
       })
-      expect(code).toMatchInlineSnapshot(`"\\"development\\";"`)
+      expect(code).toMatchInlineSnapshot(`""development";"`)
     })
 
     it('should replace NODE_ENV in statement (dev)', async () => {

@@ -2,22 +2,19 @@
  * @jest-environment jsdom
  */
 import { act, render } from '@testing-library/react'
+import '@testing-library/jest-dom'
 import Link from 'next/link'
 import React from 'react'
-import { getPackageVersion } from 'next/dist/lib/get-package-version'
-import semver from 'next/dist/compiled/semver'
 
 describe('<Link/>', () => {
   let spy
   let expectedErrors
   beforeAll(async () => {
-    spy = jest.spyOn(console, 'error').mockImplementation(() => {})
-
-    const reactVersion = await getPackageVersion({
-      cwd: __dirname,
-      name: 'react-dom',
+    spy = jest.spyOn(console, 'error').mockImplementation((...args) => {
+      console.log(...args)
     })
-    expectedErrors = reactVersion && semver.gte(reactVersion, '18.0.0') ? 1 : 0
+
+    expectedErrors = 0
   })
 
   it('test link with unmount', () => {
